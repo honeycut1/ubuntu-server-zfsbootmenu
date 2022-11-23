@@ -51,6 +51,7 @@ zfs_rpool_ashift="12" #Drive setting for zfs pool. ashift=9 means 512B sectors (
 mirror_archive="" #"" to use the default ubuntu repository. Set to an ISO 3166-1 alpha-2 country code to use a country mirror archive, e.g. "GB". A speed test is run and the fastest archive is selected. Country codes: https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2
 
 RPOOL="rpool" #Root pool name.
+RPOOL_size="0" #sgdisk '-new' subcommand ending sector. "0" is all remaining disk space. "+200G" will size as 200GiB 
 topology_root="single" #"single", "mirror", "raid0", "raidz1", "raidz2", or "raidz3" topology on root pool.
 disks_root="1" #Number of disks in array for root pool. Not used with single topology.
 EFI_boot_size="512" #EFI boot loader partition size in mebibytes (MiB).
@@ -72,7 +73,7 @@ quiet_boot="yes" #Set to "no" to show boot sequence.
 ethprefix="e" #First letter of ethernet interface. Used to identify ethernet interface to setup networking in new install.
 install_log="ubuntu_setup_zfs_root.log" #Installation log filename.
 log_loc="/var/log" #Installation log location.
-ipv6_apt_fix_live_iso="no" #Try setting to "yes" gif apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
+ipv6_apt_fix_live_iso="no" #Try setting to "yes" if apt-get is slow in the ubuntu live iso. Doesn't affect ipv6 functionality in the new install.
 remoteaccess_hostname="zbm" #Name to identify the zfsbootmenu system on the network.
 remoteaccess_ip_config="dhcp" #"dhcp", "dhcp,dhcp6", "dhcp6", or "static". Automatic (dhcp) or static IP assignment for zfsbootmenu remote access.
 remoteaccess_ip="192.168.0.222" #Remote access static IP address to connect to ZFSBootMenu. Not used for automatic IP configuration.
@@ -80,6 +81,18 @@ remoteaccess_netmask="255.255.255.0" #Remote access subnet mask. Not used for "d
 ubuntu_original="http://archive.ubuntu.com/ubuntu" #Default ubuntu repository.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
 extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
+
+# source ubuntu_server_root_zfs.sh if it exists.
+readonly usz_conffile="$(dirname $0)/usz_config.sh"
+if [[ -f $usz_conffile ]]; then
+    echo "==== Sourcing $usz_conffile"
+	(set -x; cut -d' ' -f1 $usz_conffile)
+    source $usz_conffile || exit 1
+	echo -e "-----------------------------\n"
+fi
+
+printenv | sort
+
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -304,6 +317,14 @@ getdiskID_pool(){
 
 clear_partition_table(){
 	pool="$1" #root or data
+
+	echo -e "\n-----------------------------"
+	echo "Preparing to clear partition table for the following disks:"
+	(set -x; cat /tmp/diskid_check_"${pool}".txt)
+	echo "-----------------------------"
+	echo "Press Enter to Continue or CTRL+C to abort."
+	read -r _
+
 	while IFS= read -r diskidnum;
 	do
 		echo "Clearing partition table on disk ${diskidnum}."
@@ -888,6 +909,7 @@ debootstrap_part1_Func(){
 		do
 			echo "Creating partitions on disk ${diskidnum}."
 			##2.3 create bootloader partition
+			set -x
 			sgdisk -n1:1M:+"${EFI_boot_size}"M -t1:EF00 /dev/disk/by-id/"${diskidnum}"
 		
 			##2.4 create swap partition 
@@ -898,7 +920,8 @@ debootstrap_part1_Func(){
 			sgdisk -n2:0:+"${swap_size}"M -t2:"${swap_hex_code}" /dev/disk/by-id/"${diskidnum}"
 		
 			##2.6 Create root pool partition
-			sgdisk     -n3:0:0      -t3:"${root_hex_code}" /dev/disk/by-id/"${diskidnum}"
+			sgdisk     -n3:0:"${RPOOL_size}" -t3:"${root_hex_code}" /dev/disk/by-id/"${diskidnum}"
+			set -x
 		
 		done < /tmp/diskid_check_"${pool}".txt
 		partprobe
@@ -921,7 +944,10 @@ debootstrap_createzfspools_Func(){
 		partprobe
 		sleep 2
 
+		echo -e "\nCreating filesystem datasets to act as containers..."
+		set -x
 		##Create filesystem datasets to act as containers
+
 		zfs create -o canmount=off -o mountpoint=none "$RPOOL"/ROOT 
 					
 		##Create root filesystem dataset
@@ -941,17 +967,17 @@ debootstrap_createzfspools_Func(){
 		##https://openzfs.github.io/openzfs-docs/Getting%20Started/Debian/Debian%20Buster%20Root%20on%20ZFS.html#step-3-system-installation
 		##"-o canmount=off" is for a system directory that should rollback with the rest of the system.
 		
-		zfs create	"$RPOOL"/srv 						##server webserver content
-		zfs create -o canmount=off	"$RPOOL"/usr
-		zfs create	"$RPOOL"/usr/local					##locally compiled software
+		# zfs create	"$RPOOL"/srv 						##server webserver content
+		# zfs create -o canmount=off	"$RPOOL"/usr
+		# zfs create	"$RPOOL"/usr/local					##locally compiled software
 		zfs create -o canmount=off "$RPOOL"/var 
 		zfs create -o canmount=off "$RPOOL"/var/lib
-		zfs create	"$RPOOL"/var/games					##game files
-		zfs create	"$RPOOL"/var/log 					##log files
-		zfs create	"$RPOOL"/var/mail 					##local mails
+		# zfs create	"$RPOOL"/var/games					##game files
+		# zfs create	"$RPOOL"/var/log 					##log files
+		# zfs create	"$RPOOL"/var/mail 					##local mails
 		zfs create	"$RPOOL"/var/snap					##snaps handle revisions themselves
-		zfs create	"$RPOOL"/var/spool					##printing tasks
-		zfs create	"$RPOOL"/var/www					##server webserver content
+		# zfs create	"$RPOOL"/var/spool					##printing tasks
+		# zfs create	"$RPOOL"/var/www					##server webserver content
 		
 		
 		##USERDATA datasets
@@ -971,7 +997,7 @@ debootstrap_createzfspools_Func(){
 		##Mount a tempfs at /run
 		mkdir "$mountpoint"/run
 		mount -t tmpfs tmpfs "$mountpoint"/run
-
+		set +x
 	}
 	mountpointsFunc
 }
@@ -1809,10 +1835,10 @@ distroinstall(){
 	#rm -f /etc/resolv.conf ##Gives an error during ubuntu-server install. "Same file as /run/systemd/resolve/stub-resolv.conf". https://bugs.launchpad.net/ubuntu/+source/systemd/+bug/1774632
 	#ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
 	
-	if [ "$distro_variant" != "server" ];
-	then
-		zfs create 	"$RPOOL"/var/lib/AccountsService
-	fi
+	#if [ "$distro_variant" != "server" ];
+	#then
+	#	zfs create 	"$RPOOL"/var/lib/AccountsService
+	#fi
 
 	case "$distro_variant" in
 		server)	
@@ -2201,6 +2227,7 @@ update_date_time(){
 }
 update_date_time
 
+
 initialinstall(){
 	disclaimer
 	live_desktop_check
@@ -2210,6 +2237,11 @@ initialinstall(){
 
 	debootstrap_part1_Func
 	debootstrap_createzfspools_Func
+
+	echo -e "\nDisk has been partitioned and zfs dataset created."
+	echo "Next step is to create debian minimal with zfsbootmenu."
+	echo "Press Enter to Continue or CTRL+C to abort."
+	read -r _
 	debootstrap_installminsys_Func
 	systemsetupFunc_part1 #Basic system configuration.
 	systemsetupFunc_part2 #Install zfs.
