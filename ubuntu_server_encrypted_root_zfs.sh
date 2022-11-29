@@ -82,17 +82,51 @@ ubuntu_original="http://archive.ubuntu.com/ubuntu" #Default ubuntu repository.
 install_warning_level="PRIORITY=critical" #"PRIORITY=critical", or "FRONTEND=noninteractive". Pause install to show critical messages only or do not pause (noninteractive). Script still pauses for keyboard selection at the end.
 extra_programs="no" #"yes", or "no". Install additional programs if not included in the ubuntu distro package. Programs: cifs-utils, locate, man-db, openssh-server, tldr.
 
-# source ubuntu_server_root_zfs.sh if it exists.
-readonly usz_conffile="$(dirname $0)/usz_config.sh"
-if [[ -f $usz_conffile ]]; then
-    echo "==== Sourcing $usz_conffile"
-	(set -x; cut -d' ' -f1 $usz_conffile)
-    source $usz_conffile || exit 1
-	echo -e "-----------------------------\n"
+# Only highlite output if stdout going to terminal
+if [ -t 1 ]; then
+    bold=$(tput bold)
+    reset=$(tput sgr0)
+    red=$(tput setaf 1)
+    green=$(tput setaf 2)
+else
+    bold=""
+    reset=""
+    red=""
+    green=""
 fi
 
-printenv | sort
+usage() {
+    echo -n "${bold}Usage:${reset} $(basename $0) [OPTIONS] <subcommand>
+    ${bold}Options:${reset}
+    -c   <filename>  Config file to source for overriding defaults"
+    echo
+    exit 1
+}
 
+config_file=""
+while getopts ':c:' OPTION; do
+    case "$OPTION" in
+    c )
+        config_file="$OPTARG"
+    ;;
+    \? )
+        usage
+        ;;
+    * )
+    # Catches ':' if parameter is not provided for option requiring one.
+    usage
+        exit 1
+        ;;
+    esac
+done
+shift "$(($OPTIND -1))"
+
+if [[ -n $config_file ]]; then
+    echo "==== Sourcing $config_file"
+	cut -d' ' -f1 $config_file
+    source $config_file
+	echo -e "-----------------------------\n"
+fi
 
 ##Check for root priviliges
 if [ "$(id -u)" -ne 0 ]; then
@@ -921,7 +955,7 @@ debootstrap_part1_Func(){
 		
 			##2.6 Create root pool partition
 			sgdisk     -n3:0:"${RPOOL_size}" -t3:"${root_hex_code}" /dev/disk/by-id/"${diskidnum}"
-			set -x
+			set +x
 		
 		done < /tmp/diskid_check_"${pool}".txt
 		partprobe
@@ -952,15 +986,18 @@ debootstrap_createzfspools_Func(){
 					
 		##Create root filesystem dataset
 		rootzfs_full_name="ubuntu.$(date +%Y.%m.%d)"
-		zfs create -o canmount=noauto -o mountpoint=/ "$RPOOL"/ROOT/"$rootzfs_full_name" ##zfsbootmenu debian guide
+		zfs_os_root="$RPOOL"/ROOT/"$rootzfs_full_name"
+		zfs create -o canmount=noauto -o mountpoint=/ "$zfs_os_root" ##zfsbootmenu debian guide
+
+
 		##assigns canmount=noauto on any file systems with mountpoint=/ (that is, on any additional boot environments you create).
 		##With ZFS, it is not normally necessary to use a mount command (either mount or zfs mount). 
 		##This situation is an exception because of canmount=noauto.
-		zfs mount "$RPOOL"/ROOT/"$rootzfs_full_name"
-		zpool set bootfs="$RPOOL"/ROOT/"$rootzfs_full_name" "$RPOOL"
+		zfs mount "$zfs_os_root"
+		zpool set bootfs="$zfs_os_root" "$RPOOL"
 		
-		
-		##Create datasets
+		## create datasets
+
 		##Aim is to separate OS from user data.
 		##Allows root filesystem to be rolled back without rolling back user data such as logs.
 		##https://didrocks.fr/2020/06/16/zfs-focus-on-ubuntu-20.04-lts-zsys-dataset-layout/
@@ -970,28 +1007,28 @@ debootstrap_createzfspools_Func(){
 		# zfs create	"$RPOOL"/srv 						##server webserver content
 		# zfs create -o canmount=off	"$RPOOL"/usr
 		# zfs create	"$RPOOL"/usr/local					##locally compiled software
-		zfs create -o canmount=off "$RPOOL"/var 
-		zfs create -o canmount=off "$RPOOL"/var/lib
+		# zfs create -o canmount=off "$RPOOL"/var 
+		# zfs create -o canmount=off "$RPOOL"/var/lib
 		# zfs create	"$RPOOL"/var/games					##game files
 		# zfs create	"$RPOOL"/var/log 					##log files
 		# zfs create	"$RPOOL"/var/mail 					##local mails
-		zfs create	"$RPOOL"/var/snap					##snaps handle revisions themselves
+		# zfs create	"$RPOOL"/var/snap					##snaps handle revisions themselves
 		# zfs create	"$RPOOL"/var/spool					##printing tasks
 		# zfs create	"$RPOOL"/var/www					##server webserver content
 		
 		
 		##USERDATA datasets
-		zfs create "$RPOOL"/home
-		zfs create -o mountpoint=/root "$RPOOL"/home/root
-		chmod 700 "$mountpoint"/root
+		# zfs create "$RPOOL"/home
+		# zfs create -o mountpoint=/root "$RPOOL"/home/root
+		# chmod 700 "$mountpoint"/root
 
 		
 		##optional
 		##exclude from snapshots
-		zfs create -o com.sun:auto-snapshot=false "$RPOOL"/var/cache
-		zfs create -o com.sun:auto-snapshot=false "$RPOOL"/var/tmp
-		chmod 1777 "$mountpoint"/var/tmp
-		zfs create -o com.sun:auto-snapshot=false "$RPOOL"/var/lib/docker ##Docker manages its own datasets & snapshots
+		# zfs create -o com.sun:auto-snapshot=false "$RPOOL"/var/cache
+		# zfs create -o com.sun:auto-snapshot=false "$RPOOL"/var/tmp
+		# chmod 1777 "$mountpoint"/var/tmp
+		# zfs create -o com.sun:auto-snapshot=false "$RPOOL"/var/lib/docker ##Docker manages its own datasets & snapshots
 
 	
 		##Mount a tempfs at /run
@@ -1796,7 +1833,7 @@ systemsetupFunc_part5(){
 
 usersetup(){
 	##Create user account and setup groups
-	zfs create -o mountpoint=/home/"$user" "$RPOOL"/home/${user}
+	# zfs create -o mountpoint=/home/"$user" "$RPOOL"/home/${user}
 
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 
@@ -2226,7 +2263,6 @@ update_date_time(){
 	timedatectl
 }
 update_date_time
-
 
 initialinstall(){
 	disclaimer
