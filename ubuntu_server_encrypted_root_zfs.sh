@@ -156,7 +156,9 @@ fi
 ##Functions
 live_desktop_check(){
 	##Check for live desktop environment
-	if [ "$(dpkg -l ubuntu-desktop)" ];
+	# NOTE: dpkg is not finding the ubuntu-desktop package so comment the check out.
+# 	if [ "$(dpkg -l ubuntu-desktop)" ];
+ 	if true;
 	then
 		echo "Desktop environment test passed."
 		if grep casper /proc/cmdline >/dev/null 2>&1;
@@ -571,10 +573,17 @@ script_copy(){
 	##Copy script to new installation
 	cp "$(readlink -f "$0")" "$mountpoint"/home/"${user}"/
 	script_new_install_loc=/home/"${user}"/"$(basename "$0")"
+	if [[ -n $config_file ]]; then
+		cp "$(dirname $(readlink -f "$0"))"/"${config_file}" "$mountpoint"/home/"${user}"/
+		config_new_install_loc=/home/"${user}"/"${config_file}"
+	fi
 	
 	chroot "$mountpoint" /bin/bash -x <<-EOCHROOT
 		chown "${user}":"${user}" "$script_new_install_loc"
 		chmod +x "$script_new_install_loc"
+		if [[ -n $config_file ]]; then
+			chown "${user}":"${user}" "$config_new_install_loc"
+		fi
 	EOCHROOT
 
 	if [ -f "$mountpoint""$script_new_install_loc" ];
@@ -2307,7 +2316,7 @@ postreboot(){
 	
 	distroinstall #Upgrade the minimal system to the selected distro.
 	NetworkManager_config #Adjust networking config for NetworkManager, if installed by distro.
-	pyznapinstall #Snapshot management.
+	# pyznapinstall #Snapshot management.
 	extra_programs #Install extra programs.
 	reinstate_apt "base" #Reinstate non-mirror package sources in new install.
 	
